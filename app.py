@@ -1,22 +1,49 @@
+
 import streamlit as st
 import yfinance as yf
-from statsmodels.tsa.arima.model import ARIMA
 import pandas as pd
+from statsmodels.tsa.arima.model import ARIMA
 
-ticker = st.text_input("Enter stock ticker", "AAPL")
-period = st.selectbox("Select period", ["1y", "2y", "5y"])
+st.title("ARIMA Stock Forecast")
 
-if st.button("Run Prediction"):
-    data = yf.download(ticker, period=period)
+ticker = st.text_input("Ticker", "AAPL")
+period = st.selectbox("Period", ["1y", "2y", "5y"])
+
+@st.cache_data(ttl=3600)
+def load_data(ticker, period):
+    df = yf.download(ticker, period=period, progress=False)
+    return df
+
+if st.button("Run Forecast"):
+    data = load_data(ticker, period)
+
+    if data.empty or "Close" not in data:
+        st.error("Failed to load data (Yahoo Finance rate-limited). Try again later.")
+        st.stop()
+
     close = data["Close"].dropna()
 
-    model = ARIMA(close, order=(5,1,0))
-    model_fit = model.fit()
+    if len(close) < 50:
+        st.error("Not enough data points for ARIMA.")
+        st.stop()
 
-    forecast = model_fit.forecast(steps=30)
+    # Force a business-day frequency
+    close.index = pd.to_datetime(close.index)
+    close = close.asfreq("B")
+    close = close.fillna(method="ffill")
 
-    st.subheader("Last prices")
+    st.subheader("Historical Prices")
     st.line_chart(close)
 
-    st.subheader("30-Day Forecast")
-    st.line_chart(forecast)
+    try:
+        model = ARIMA(close, order=(1,1,1))
+        model_fit = model.fit()
+
+        forecast = model_fit.forecast(steps=30)
+
+        st.subheader("30-Day Forecast")
+        st.line_chart(forecast)
+
+    except Exception as e:
+        st.error("Model failed to converge.")
+        st.code(str(e))
